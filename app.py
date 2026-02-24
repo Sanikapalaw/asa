@@ -5,6 +5,7 @@ import joblib
 import pydeck as pdk
 import json
 import requests
+import os
 from tensorflow.keras.models import load_model
 
 # --------------------------------------------------
@@ -15,65 +16,43 @@ st.title("🚚 Intelligent Urban Logistics Optimization System")
 st.caption("Deep Learning-Based Strategic Last-Mile Delivery Decision Support")
 
 # --------------------------------------------------
-# LOAD MODELS
+# LOAD MODELS (FROM ROOT FOLDER)
 # --------------------------------------------------
 @st.cache_resource
 def load_dl_model():
-    return load_model("models/dl_model.keras")
+    if not os.path.exists("dl_model.keras"):
+        st.error("Model file not found!")
+        st.stop()
+    return load_model("dl_model.keras")
 
 @st.cache_resource
 def load_scaler():
-    return joblib.load("models/scaler.pkl")
+    if not os.path.exists("scaler.pkl"):
+        st.error("Scaler file not found!")
+        st.stop()
+    return joblib.load("scaler.pkl")
 
 model = load_dl_model()
 scaler = load_scaler()
-expected_features = scaler.feature_names_in_
 
-with open("models/model_metrics.json", "r") as f:
-    metrics = json.load(f)
+# Feature names safe check
+if hasattr(scaler, "feature_names_in_"):
+    expected_features = scaler.feature_names_in_
+else:
+    expected_features = None
 
-feature_importance = pd.read_csv("models/feature_importance.csv")
+# Load metrics safely
+try:
+    with open("model_metrics.json", "r") as f:
+        metrics = json.load(f)
+except:
+    metrics = {}
 
-# --------------------------------------------------
-# ORS CONFIG (STREAMLIT SECRETS SAFE CHECK)
-# --------------------------------------------------
-if "ORS_API_KEY" not in st.secrets:
-    st.error("ORS_API_KEY not configured in Streamlit secrets.")
-    st.stop()
-
-ORS_API_KEY = st.secrets["ORS_API_KEY"]
-
-@st.cache_data
-def get_ors_route(start_lat, start_lon, end_lat, end_lon):
-
-    url = "https://api.openrouteservice.org/v2/directions/driving-car"
-
-    headers = {
-        "Authorization": ORS_API_KEY,
-        "Content-Type": "application/json"
-    }
-
-    body = {
-        "coordinates": [
-            [start_lon, start_lat],
-            [end_lon, end_lat]
-        ]
-    }
-
-    try:
-        response = requests.post(url, json=body, headers=headers, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-
-        geometry = data["features"][0]["geometry"]["coordinates"]
-        distance = data["features"][0]["properties"]["summary"]["distance"] / 1000
-        duration = data["features"][0]["properties"]["summary"]["duration"] / 60
-
-        return geometry, distance, duration
-
-    except Exception as e:
-        st.error("Routing service unavailable.")
-        return None, None, None
+# Load feature importance safely
+try:
+    feature_importance = pd.read_csv("feature_importance.csv")
+except:
+    feature_importance = pd.DataFrame()
 
 # --------------------------------------------------
 # SIDEBAR INPUTS
@@ -95,50 +74,54 @@ traffic_level = st.sidebar.selectbox(
 )
 
 # --------------------------------------------------
-# GET ROUTE
+# SIMPLE DISTANCE CALCULATION (No API Dependency)
 # --------------------------------------------------
-route_geometry, distance, ors_duration = get_ors_route(
-    store_lat, store_lon,
-    customer_lat, customer_lon
-)
+distance = np.sqrt(
+    (store_lat - customer_lat)**2 +
+    (store_lon - customer_lon)**2
+) * 111  # Rough km conversion
 
-if distance is None:
-    st.stop()
+ors_duration = distance * 4  # Assume avg 15 km/hr city speed
 
 # --------------------------------------------------
 # PREPARE MODEL INPUT
 # --------------------------------------------------
-input_dict = {}
+if expected_features is not None:
+    input_dict = {}
 
-for feature in expected_features:
+    for feature in expected_features:
 
-    if feature.lower() in ["restaurant_latitude", "store_latitude"]:
-        input_dict[feature] = store_lat
+        if "latitude" in feature.lower() and "delivery" not in feature.lower():
+            input_dict[feature] = store_lat
 
-    elif feature.lower() in ["restaurant_longitude", "store_longitude"]:
-        input_dict[feature] = store_lon
+        elif "longitude" in feature.lower() and "delivery" not in feature.lower():
+            input_dict[feature] = store_lon
 
-    elif feature.lower() in ["delivery_location_latitude", "customer_latitude"]:
-        input_dict[feature] = customer_lat
+        elif "delivery" in feature.lower() and "latitude" in feature.lower():
+            input_dict[feature] = customer_lat
 
-    elif feature.lower() in ["delivery_location_longitude", "customer_longitude"]:
-        input_dict[feature] = customer_lon
+        elif "delivery" in feature.lower() and "longitude" in feature.lower():
+            input_dict[feature] = customer_lon
 
-    elif "distance" in feature.lower():
-        input_dict[feature] = distance
+        elif "distance" in feature.lower():
+            input_dict[feature] = distance
 
-    elif "rating" in feature.lower():
-        input_dict[feature] = store_rating
+        elif "rating" in feature.lower():
+            input_dict[feature] = store_rating
 
-    elif "cost" in feature.lower():
-        input_dict[feature] = order_cost
+        elif "cost" in feature.lower():
+            input_dict[feature] = order_cost
 
-    else:
-        input_dict[feature] = 0
+        else:
+            input_dict[feature] = 0
 
-input_df = pd.DataFrame([input_dict])
-input_df = input_df[expected_features]
-input_scaled = scaler.transform(input_df)
+    input_df = pd.DataFrame([input_dict])
+    input_df = input_df[expected_features]
+    input_scaled = scaler.transform(input_df)
+
+else:
+    st.error("Scaler missing feature names.")
+    st.stop()
 
 # --------------------------------------------------
 # PREDICTION
@@ -164,13 +147,12 @@ col1.metric("📏 Road Distance (km)", f"{distance:.2f}")
 col2.metric("⏱ Predicted Delivery Time (mins)", f"{predicted_time:.2f}")
 col3.metric("🚀 Optimized Time (mins)", f"{optimized_time:.2f}")
 
-# Strategic Layer
 sla_threshold = 40
 
 if predicted_time > sla_threshold:
-    st.error("⚠ High Delay Risk - Increase manpower or prioritize order")
+    st.error("⚠ High Delay Risk - Increase manpower")
 elif predicted_time > 30:
-    st.warning("⚠ Moderate Delay Risk - Monitor preparation closely")
+    st.warning("⚠ Moderate Delay Risk - Monitor closely")
 else:
     st.success("✔ Low Delay Risk - Operations Stable")
 
@@ -178,29 +160,20 @@ improvement = ((predicted_time - optimized_time) / predicted_time) * 100
 st.write(f"📈 Estimated Efficiency Gain: {improvement:.2f}%")
 
 # --------------------------------------------------
-# MAP
+# MAP VISUALIZATION
 # --------------------------------------------------
-st.subheader("🗺 Real-Time Delivery Route")
+st.subheader("🗺 Delivery Route")
 
 route_layer = pdk.Layer(
-    "PathLayer",
-    data=[{"path": route_geometry}],
-    get_path="path",
+    "LineLayer",
+    data=[{
+        "start": [store_lon, store_lat],
+        "end": [customer_lon, customer_lat]
+    }],
+    get_source_position="start",
+    get_target_position="end",
+    get_width=5,
     get_color=[255, 0, 0],
-    width_min_pixels=5,
-)
-
-marker_data = pd.DataFrame({
-    "lat": [store_lat, customer_lat],
-    "lon": [store_lon, customer_lon],
-})
-
-scatter_layer = pdk.Layer(
-    "ScatterplotLayer",
-    data=marker_data,
-    get_position='[lon, lat]',
-    get_radius=150,
-    get_fill_color=[0, 255, 0],
 )
 
 view_state = pdk.ViewState(
@@ -211,9 +184,8 @@ view_state = pdk.ViewState(
 
 st.pydeck_chart(
     pdk.Deck(
-        layers=[route_layer, scatter_layer],
-        initial_view_state=view_state,
-        map_style="road",
+        layers=[route_layer],
+        initial_view_state=view_state
     )
 )
 
@@ -222,10 +194,10 @@ st.pydeck_chart(
 # --------------------------------------------------
 with st.expander("📊 Advanced Model Evaluation"):
 
-    st.write("Random Forest MAE:", round(metrics["rf_mae"], 2))
-    st.write("Random Forest R²:", round(metrics["rf_r2"], 2))
-    st.write("Deep Learning MAE:", round(metrics["dl_mae"], 2))
-    st.write("Deep Learning R²:", round(metrics["dl_r2"], 2))
+    if metrics:
+        st.write("Deep Learning MAE:", round(metrics.get("dl_mae", 0), 2))
+        st.write("Deep Learning R²:", round(metrics.get("dl_r2", 0), 2))
 
-    st.markdown("### Top Feature Importance")
-    st.dataframe(feature_importance.head(10))
+    if not feature_importance.empty:
+        st.markdown("### Top Feature Importance")
+        st.dataframe(feature_importance.head(10))
