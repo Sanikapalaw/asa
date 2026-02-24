@@ -5,7 +5,6 @@ import joblib
 import pydeck as pdk
 import json
 import requests
-import os
 from tensorflow.keras.models import load_model
 
 # --------------------------------------------------
@@ -16,10 +15,18 @@ st.title("🚚 Intelligent Urban Logistics Optimization System")
 st.caption("Deep Learning-Based Strategic Last-Mile Delivery Decision Support")
 
 # --------------------------------------------------
-# LOAD MODELS & FILES
+# LOAD MODELS
 # --------------------------------------------------
-model = load_model("models/dl_model.keras")
-scaler = joblib.load("models/scaler.pkl")
+@st.cache_resource
+def load_dl_model():
+    return load_model("models/dl_model.keras")
+
+@st.cache_resource
+def load_scaler():
+    return joblib.load("models/scaler.pkl")
+
+model = load_dl_model()
+scaler = load_scaler()
 expected_features = scaler.feature_names_in_
 
 with open("models/model_metrics.json", "r") as f:
@@ -28,9 +35,12 @@ with open("models/model_metrics.json", "r") as f:
 feature_importance = pd.read_csv("models/feature_importance.csv")
 
 # --------------------------------------------------
-# ORS CONFIG (Secure)
+# ORS CONFIG (STREAMLIT SECRETS SAFE CHECK)
 # --------------------------------------------------
-# ORS CONFIG (Using Streamlit Secrets)
+if "ORS_API_KEY" not in st.secrets:
+    st.error("ORS_API_KEY not configured in Streamlit secrets.")
+    st.stop()
+
 ORS_API_KEY = st.secrets["ORS_API_KEY"]
 
 @st.cache_data
@@ -53,7 +63,6 @@ def get_ors_route(start_lat, start_lon, end_lat, end_lon):
     try:
         response = requests.post(url, json=body, headers=headers, timeout=10)
         response.raise_for_status()
-
         data = response.json()
 
         geometry = data["features"][0]["geometry"]["coordinates"]
@@ -63,7 +72,7 @@ def get_ors_route(start_lat, start_lon, end_lat, end_lon):
         return geometry, distance, duration
 
     except Exception as e:
-        st.error(f"Routing Error: {e}")
+        st.error("Routing service unavailable.")
         return None, None, None
 
 # --------------------------------------------------
@@ -86,7 +95,7 @@ traffic_level = st.sidebar.selectbox(
 )
 
 # --------------------------------------------------
-# GET REAL ROAD ROUTE
+# GET ROUTE
 # --------------------------------------------------
 route_geometry, distance, ors_duration = get_ors_route(
     store_lat, store_lon,
@@ -97,7 +106,7 @@ if distance is None:
     st.stop()
 
 # --------------------------------------------------
-# BUILD MODEL INPUT
+# PREPARE MODEL INPUT
 # --------------------------------------------------
 input_dict = {}
 
@@ -132,29 +141,30 @@ input_df = input_df[expected_features]
 input_scaled = scaler.transform(input_df)
 
 # --------------------------------------------------
-# DEEP LEARNING PREDICTION
+# PREDICTION
 # --------------------------------------------------
 model_time = model.predict(input_scaled, verbose=0)[0][0]
 
 prep_time = 10
 logic_time = prep_time + ors_duration
+
 predicted_time = (model_time * 0.6) + (logic_time * 0.4)
 
-# Traffic Simulation
 traffic_factor = {"Low":1.0, "Moderate":1.2, "High":1.5}[traffic_level]
 optimized_time = predicted_time / traffic_factor
 
 # --------------------------------------------------
-# DISPLAY RESULTS
+# DASHBOARD
 # --------------------------------------------------
 st.subheader("📊 Operational Prediction Dashboard")
 
 col1, col2, col3 = st.columns(3)
+
 col1.metric("📏 Road Distance (km)", f"{distance:.2f}")
 col2.metric("⏱ Predicted Delivery Time (mins)", f"{predicted_time:.2f}")
 col3.metric("🚀 Optimized Time (mins)", f"{optimized_time:.2f}")
 
-# SLA & Strategic Layer
+# Strategic Layer
 sla_threshold = 40
 
 if predicted_time > sla_threshold:
@@ -168,7 +178,7 @@ improvement = ((predicted_time - optimized_time) / predicted_time) * 100
 st.write(f"📈 Estimated Efficiency Gain: {improvement:.2f}%")
 
 # --------------------------------------------------
-# MAP VISUALIZATION
+# MAP
 # --------------------------------------------------
 st.subheader("🗺 Real-Time Delivery Route")
 
