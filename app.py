@@ -11,9 +11,10 @@ from tensorflow.keras.models import load_model
 # --------------------------------------------------
 # PAGE CONFIG
 # --------------------------------------------------
-st.set_page_config(page_title="Urban Logistics AI", layout="wide")
-st.title("🚚 AI-Powered Strategic Last-Mile Delivery Optimization Dashboard")
-st.caption("Deep Learning + Business Intelligence Hybrid Decision System")
+st.set_page_config(page_title="Strategic Last-Mile Delivery DSS", layout="wide")
+
+st.title("Strategic Last-Mile Delivery Decision Support System")
+st.caption("AI-Driven Predictive Analytics and Operational Optimization Framework")
 
 # --------------------------------------------------
 # LOAD MODELS
@@ -21,14 +22,14 @@ st.caption("Deep Learning + Business Intelligence Hybrid Decision System")
 @st.cache_resource
 def load_dl_model():
     if not os.path.exists("dl_model.keras"):
-        st.error("Model file not found!")
+        st.error("Model file not found.")
         st.stop()
     return load_model("dl_model.keras")
 
 @st.cache_resource
 def load_scaler():
     if not os.path.exists("scaler.pkl"):
-        st.error("Scaler file not found!")
+        st.error("Scaler file not found.")
         st.stop()
     return joblib.load("scaler.pkl")
 
@@ -51,9 +52,9 @@ except:
     feature_importance = pd.DataFrame()
 
 # --------------------------------------------------
-# SIDEBAR INPUTS
+# SIDEBAR INPUT PARAMETERS
 # --------------------------------------------------
-st.sidebar.header("📍 Delivery Details")
+st.sidebar.header("Operational Input Parameters")
 
 store_lat = st.sidebar.number_input("Store Latitude", value=19.2089)
 store_lon = st.sidebar.number_input("Store Longitude", value=72.8722)
@@ -61,11 +62,11 @@ store_lon = st.sidebar.number_input("Store Longitude", value=72.8722)
 customer_lat = st.sidebar.number_input("Customer Latitude", value=19.2108)
 customer_lon = st.sidebar.number_input("Customer Longitude", value=72.8746)
 
-store_rating = st.sidebar.slider("Store Rating", 1.0, 5.0, 4.0)
-order_cost = st.sidebar.number_input("Order Cost (₹)", value=300)
+store_rating = st.sidebar.slider("Store Performance Rating", 1.0, 5.0, 4.0)
+order_cost = st.sidebar.number_input("Order Value (INR)", value=300)
 
 traffic_level = st.sidebar.selectbox(
-    "🚦 Traffic Level",
+    "Traffic Intensity Level",
     ["Low", "Moderate", "High"]
 )
 
@@ -75,9 +76,9 @@ traffic_level = st.sidebar.selectbox(
 distance = np.sqrt(
     (store_lat - customer_lat)**2 +
     (store_lon - customer_lon)**2
-) * 111  # rough km approximation
+) * 111
 
-estimated_travel_time = distance * 4  # city speed factor
+estimated_travel_time = distance * 4
 
 # --------------------------------------------------
 # MODEL INPUT PREPARATION
@@ -109,7 +110,7 @@ input_scaled = scaler.transform(input_df)
 # PREDICTION SYSTEM
 # --------------------------------------------------
 
-# 1️⃣ ML Base Prediction
+# ML Base Prediction
 model_time = model.predict(input_scaled, verbose=0)[0][0]
 
 prep_time = 10
@@ -117,59 +118,51 @@ logic_time = prep_time + estimated_travel_time
 
 base_predicted_time = (model_time * 0.6) + (logic_time * 0.4)
 
-# --------------------------------------------------
-# 2️⃣ BUSINESS LOGIC LAYER
-# --------------------------------------------------
-
-# Rating penalty
+# Business Logic Layer
 rating_penalty = (5 - store_rating) * 2
 
-# Cost penalty
 cost_penalty = 0
 if order_cost > 1000:
     cost_penalty = 3
 elif order_cost > 500:
     cost_penalty = 1.5
 
-# Adjusted time
-predicted_time = base_predicted_time + rating_penalty + cost_penalty
+business_adjusted_time = base_predicted_time + rating_penalty + cost_penalty
 
-# --------------------------------------------------
-# 3️⃣ TRAFFIC MULTIPLIER
-# --------------------------------------------------
+# Traffic Multiplier
 traffic_factor = {"Low":1.0, "Moderate":1.2, "High":1.5}[traffic_level]
-optimized_time = predicted_time * traffic_factor
+final_operational_time = business_adjusted_time * traffic_factor
 
 # --------------------------------------------------
-# DASHBOARD
+# DASHBOARD SECTION
 # --------------------------------------------------
-st.subheader("📊 Operational Prediction Dashboard")
+st.subheader("Delivery Time Forecasting and Risk Assessment")
 
 col1, col2, col3 = st.columns(3)
 
-col1.metric("📏 Road Distance (km)", f"{distance:.2f}")
-col2.metric("⏱ Adjusted Delivery Time (mins)", f"{predicted_time:.2f}")
-col3.metric("🚦 Traffic Adjusted Time (mins)", f"{optimized_time:.2f}")
+col1.metric("Estimated Route Distance (km)", f"{distance:.2f}")
+col2.metric("Business-Adjusted Delivery Time (mins)", f"{business_adjusted_time:.2f}")
+col3.metric("Final Operational Delivery Time (mins)", f"{final_operational_time:.2f}")
 
-st.write("🔍 ML Base Prediction (Before Business Logic):", round(base_predicted_time, 2))
+st.write("ML Base Prediction (Before Operational Adjustments):", round(base_predicted_time, 2))
 
-# SLA Risk Analysis
+# SLA Risk Assessment
 sla_threshold = 40
 
-if optimized_time > sla_threshold:
-    st.error("⚠ High Delay Risk - Increase manpower or prioritize order")
-elif optimized_time > 30:
-    st.warning("⚠ Moderate Delay Risk - Monitor preparation closely")
+if final_operational_time > sla_threshold:
+    st.error("High Delay Risk – Operational intervention recommended.")
+elif final_operational_time > 30:
+    st.warning("Moderate Delay Risk – Monitor preparation and dispatch.")
 else:
-    st.success("✔ Low Delay Risk - Operations Stable")
+    st.success("Low Delay Risk – Operations within acceptable limits.")
 
-improvement = ((optimized_time - base_predicted_time) / base_predicted_time) * 100
-st.write(f"📈 Impact Increase due to Operational Factors: {improvement:.2f}%")
+impact = ((final_operational_time - base_predicted_time) / base_predicted_time) * 100
+st.metric("Operational Impact Increase (%)", f"{impact:.2f}%")
 
 # --------------------------------------------------
-# LEAFLET MAP
+# GEOSPATIAL VISUALIZATION
 # --------------------------------------------------
-st.subheader("🗺 Real-Time Delivery Route (OpenStreetMap View)")
+st.subheader("Geospatial Route Visualization")
 
 m = folium.Map(
     location=[store_lat, store_lon],
@@ -177,26 +170,20 @@ m = folium.Map(
     tiles="OpenStreetMap"
 )
 
-# Store marker
 folium.Marker(
     [store_lat, store_lon],
     popup="Store Location",
     icon=folium.Icon(color="green")
 ).add_to(m)
 
-# Customer marker
 folium.Marker(
     [customer_lat, customer_lon],
     popup="Customer Location",
     icon=folium.Icon(color="black")
 ).add_to(m)
 
-# Route line
 folium.PolyLine(
-    locations=[
-        [store_lat, store_lon],
-        [customer_lat, customer_lon]
-    ],
+    locations=[[store_lat, store_lon], [customer_lat, customer_lon]],
     color="blue",
     weight=5
 ).add_to(m)
@@ -204,13 +191,13 @@ folium.PolyLine(
 st_folium(m, width=950, height=500)
 
 # --------------------------------------------------
-# ADVANCED MODEL ANALYSIS
+# MODEL PERFORMANCE SECTION
 # --------------------------------------------------
-with st.expander("📊 Advanced Model Evaluation"):
+with st.expander("Model Performance Metrics and Feature Analysis"):
     if metrics:
         st.write("Deep Learning MAE:", round(metrics.get("dl_mae", 0), 2))
         st.write("Deep Learning R²:", round(metrics.get("dl_r2", 0), 2))
 
     if not feature_importance.empty:
-        st.markdown("### Top Feature Importance")
+        st.markdown("Top Feature Importance")
         st.dataframe(feature_importance.head(10))
