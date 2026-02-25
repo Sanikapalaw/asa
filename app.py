@@ -40,7 +40,7 @@ except Exception as e:
 # --------------------------------------------------
 # ORS CONFIG (Fixed 403 Forbidden Error)
 # --------------------------------------------------
-ORS_API_KEY = st.secrets["ORS_API_KEYv"]
+ORS_API_KEY = st.secrets["ORS_API_KEY"]
 
 @st.cache_data
 def get_ors_route(start_lat, start_lon, end_lat, end_lon):
@@ -174,4 +174,5 @@ with st.expander("📊 Advanced Model Evaluation & Feature Importance"):
     c1.write(f"**Random Forest R²:** {metrics['rf_r2']:.2f}")
     c2.write(f"**Deep Learning R²:** {metrics['dl_r2']:.2f}")
     st.bar_chart(feature_importance.set_index("feature").head(10))
+
 
