@@ -6,3 +6,5 @@ numpy
 joblib
 pydeck
 requests
+streamlit-folium
+folium
