@@ -2,177 +2,202 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import joblib
-import pydeck as pdk
 import json
-import requests
 import os
+import folium
+from streamlit_folium import st_folium
 from tensorflow.keras.models import load_model
 
 # --------------------------------------------------
 # PAGE CONFIG
 # --------------------------------------------------
-st.set_page_config(page_title="Urban Logistics AI", layout="wide")
-st.title("🚚 Intelligent Urban Logistics Optimization System")
-st.caption("Deep Learning-Based Strategic Last-Mile Delivery Decision Support")
+st.set_page_config(page_title="Strategic Last-Mile Delivery DSS", layout="wide")
+
+st.title("Strategic Last-Mile Delivery Decision Support System")
+st.caption("AI-Driven Predictive Analytics and Operational Optimization Framework")
 
 # --------------------------------------------------
-# LOAD MODELS & FILES (Paths fixed for root directory)
+# LOAD MODELS
 # --------------------------------------------------
 @st.cache_resource
-def load_assets():
-    # Files are in the root folder as per your GitHub screenshot
-    model = load_model("dl_model.keras") 
-    scaler = joblib.load("scaler.pkl")
-    return model, scaler
+def load_dl_model():
+    if not os.path.exists("dl_model.keras"):
+        st.error("Model file not found.")
+        st.stop()
+    return load_model("dl_model.keras")
 
+@st.cache_resource
+def load_scaler():
+    if not os.path.exists("scaler.pkl"):
+        st.error("Scaler file not found.")
+        st.stop()
+    return joblib.load("scaler.pkl")
+
+model = load_dl_model()
+scaler = load_scaler()
+expected_features = scaler.feature_names_in_
+
+# --------------------------------------------------
+# LOAD METRICS
+# --------------------------------------------------
 try:
-    model, scaler = load_assets()
-    expected_features = scaler.feature_names_in_
-
     with open("model_metrics.json", "r") as f:
         metrics = json.load(f)
+except:
+    metrics = {}
 
+try:
     feature_importance = pd.read_csv("feature_importance.csv")
-except Exception as e:
-    st.error(f"Error loading model assets: {e}. Ensure all files are in the main GitHub folder.")
-    st.stop()
+except:
+    feature_importance = pd.DataFrame()
 
 # --------------------------------------------------
-# ORS CONFIG (Fixed 403 Forbidden Error)
+# SIDEBAR INPUT PARAMETERS
 # --------------------------------------------------
-ORS_API_KEY = st.secrets["ORS_API_KEY"]
+st.sidebar.header("Operational Input Parameters")
 
-@st.cache_data
-def get_ors_route(start_lat, start_lon, end_lat, end_lon):
-    # ORS strictly requires [Longitude, Latitude]
-    url = f"https://api.openrouteservice.org/v2/directions/driving-car"
-    
-    headers = {
-        "Authorization": ORS_API_KEY,
-        "Content-Type": "application/json"
-    }
-    
-    body = {
-        "coordinates": [
-            [float(start_lon), float(start_lat)], 
-            [float(customer_lon), float(customer_lat)]
-        ]
-    }
-
-    try:
-        response = requests.post(url, json=body, headers=headers, timeout=10)
-        
-        # If headers fail, try the API Key in the URL as a fallback
-        if response.status_code == 403:
-            fallback_url = f"{url}?api_key={ORS_API_KEY}"
-            response = requests.post(fallback_url, json=body, timeout=10)
-            
-        response.raise_for_status()
-        data = response.json()
-
-        geometry = data["features"][0]["geometry"]["coordinates"]
-        distance = data["features"][0]["properties"]["summary"]["distance"] / 1000
-        duration = data["features"][0]["properties"]["summary"]["duration"] / 60
-        return geometry, distance, duration
-    except Exception as e:
-        st.error(f"Routing Error: {e}")
-        return None, None, None
-
-# --------------------------------------------------
-# SIDEBAR INPUTS - Strategic Parameters
-# --------------------------------------------------
-st.sidebar.header("📍 Delivery Details")
 store_lat = st.sidebar.number_input("Store Latitude", value=19.2089)
 store_lon = st.sidebar.number_input("Store Longitude", value=72.8722)
+
 customer_lat = st.sidebar.number_input("Customer Latitude", value=19.2108)
 customer_lon = st.sidebar.number_input("Customer Longitude", value=72.8746)
 
-st.sidebar.markdown("---")
-st.sidebar.header("☁️ Operational Environment")
-traffic_level = st.sidebar.selectbox("🚦 Traffic Level", ["Low", "Moderate", "High"])
-weather_condition = st.sidebar.selectbox("🌦 Weather Condition", ["Clear", "Cloudy", "Foggy", "Sandstorms", "Windy", "Stormy"])
-is_festival = st.sidebar.checkbox("🎉 Festival/Holiday Period")
+store_rating = st.sidebar.slider("Store Performance Rating", 1.0, 5.0, 4.0)
+order_cost = st.sidebar.number_input("Order Value (INR)", value=300)
 
-st.sidebar.markdown("---")
-store_rating = st.sidebar.slider("Store Rating", 1.0, 5.0, 4.0)
-order_cost = st.sidebar.number_input("Order Cost (₹)", value=300)
+traffic_level = st.sidebar.selectbox(
+    "Traffic Intensity Level",
+    ["Low", "Moderate", "High"]
+)
 
 # --------------------------------------------------
-# GEOSPATIAL & AI LOGIC
+# DISTANCE CALCULATION
 # --------------------------------------------------
-route_geometry, distance, ors_duration = get_ors_route(store_lat, store_lon, customer_lat, customer_lon)
+distance = np.sqrt(
+    (store_lat - customer_lat)**2 +
+    (store_lon - customer_lon)**2
+) * 111
 
-if distance is None:
-    st.info("Please verify your ORS API Key and coordinates.")
-    st.stop()
+estimated_travel_time = distance * 4
 
-# Build Model Input
-input_dict = {feat: 0 for feat in expected_features}
+# --------------------------------------------------
+# MODEL INPUT PREPARATION
+# --------------------------------------------------
+input_dict = {}
+
 for feature in expected_features:
-    f_lower = feature.lower()
-    if any(x in f_lower for x in ["restaurant_latitude", "store_latitude"]): input_dict[feature] = store_lat
-    elif any(x in f_lower for x in ["restaurant_longitude", "store_longitude"]): input_dict[feature] = store_lon
-    elif any(x in f_lower for x in ["delivery_location_latitude", "customer_latitude"]): input_dict[feature] = customer_lat
-    elif any(x in f_lower for x in ["delivery_location_longitude", "customer_longitude"]): input_dict[feature] = customer_lon
-    elif "distance" in f_lower: input_dict[feature] = distance
-    elif "rating" in f_lower: input_dict[feature] = store_rating
-    elif "cost" in f_lower: input_dict[feature] = order_cost
+    if "latitude" in feature.lower() and "delivery" not in feature.lower():
+        input_dict[feature] = store_lat
+    elif "longitude" in feature.lower() and "delivery" not in feature.lower():
+        input_dict[feature] = store_lon
+    elif "delivery" in feature.lower() and "latitude" in feature.lower():
+        input_dict[feature] = customer_lat
+    elif "delivery" in feature.lower() and "longitude" in feature.lower():
+        input_dict[feature] = customer_lon
+    elif "distance" in feature.lower():
+        input_dict[feature] = distance
+    elif "rating" in feature.lower():
+        input_dict[feature] = store_rating
+    elif "cost" in feature.lower():
+        input_dict[feature] = order_cost
+    else:
+        input_dict[feature] = 0
 
 input_df = pd.DataFrame([input_dict])[expected_features]
 input_scaled = scaler.transform(input_df)
 
-# Deep Learning Prediction
-model_time = model.predict(input_scaled, verbose=0)[0][0]
-prep_time = 10 
-logic_time = prep_time + ors_duration
+# --------------------------------------------------
+# PREDICTION SYSTEM
+# --------------------------------------------------
 
-# Weighted base prediction
+# ML Base Prediction
+model_time = model.predict(input_scaled, verbose=0)[0][0]
+
+prep_time = 10
+logic_time = prep_time + estimated_travel_time
+
 base_predicted_time = (model_time * 0.6) + (logic_time * 0.4)
 
-# STRATEGIC MULTIPLIERS (As per Project Objectives)
-traffic_factor = {"Low": 1.0, "Moderate": 1.2, "High": 1.5}[traffic_level]
-weather_factor = {"Clear": 1.0, "Cloudy": 1.1, "Foggy": 1.3, "Sandstorms": 1.4, "Windy": 1.2, "Stormy": 1.6}[weather_condition]
-festival_multiplier = 1.3 if is_festival else 1.0
+# Business Logic Layer
+rating_penalty = (5 - store_rating) * 2
 
-# Final Calculations
-predicted_time = base_predicted_time * weather_factor * festival_multiplier
-optimized_time = predicted_time / traffic_factor
+cost_penalty = 0
+if order_cost > 1000:
+    cost_penalty = 3
+elif order_cost > 500:
+    cost_penalty = 1.5
+
+business_adjusted_time = base_predicted_time + rating_penalty + cost_penalty
+
+# Traffic Multiplier
+traffic_factor = {"Low":1.0, "Moderate":1.2, "High":1.5}[traffic_level]
+final_operational_time = business_adjusted_time * traffic_factor
 
 # --------------------------------------------------
-# DISPLAY RESULTS
+# DASHBOARD SECTION
 # --------------------------------------------------
-st.subheader("📊 Operational Prediction Dashboard")
+st.subheader("Delivery Time Forecasting and Risk Assessment")
+
 col1, col2, col3 = st.columns(3)
-col1.metric("📏 Road Distance", f"{distance:.2f} km")
-col2.metric("⏱ Predicted Time", f"{predicted_time:.2f} mins")
-col3.metric("🚀 Optimized Target", f"{optimized_time:.2f} mins")
 
-# Strategic Risk Assessment Layer
+col1.metric("Estimated Route Distance (km)", f"{distance:.2f}")
+col2.metric("Business-Adjusted Delivery Time (mins)", f"{business_adjusted_time:.2f}")
+col3.metric("Final Operational Delivery Time (mins)", f"{final_operational_time:.2f}")
+
+st.write("ML Base Prediction (Before Operational Adjustments):", round(base_predicted_time, 2))
+
+# SLA Risk Assessment
 sla_threshold = 40
-if predicted_time > sla_threshold:
-    st.error(f"⚠️ **High Delay Risk** ({weather_condition} conditions + Traffic). Strategic intervention required.")
-elif predicted_time > 30:
-    st.warning("⚠️ **Moderate Delay Risk** - Monitor courier preparation.")
+
+if final_operational_time > sla_threshold:
+    st.error("High Delay Risk – Operational intervention recommended.")
+elif final_operational_time > 30:
+    st.warning("Moderate Delay Risk – Monitor preparation and dispatch.")
 else:
-    st.success("✅ **Low Delay Risk** - Operations Stable.")
+    st.success("Low Delay Risk – Operations within acceptable limits.")
 
-improvement = ((predicted_time - optimized_time) / predicted_time) * 100
-st.info(f"📈 **Strategic Insight:** Smart scheduling could reduce delivery time by **{improvement:.2f}%**.")
+impact = ((final_operational_time - base_predicted_time) / base_predicted_time) * 100
+st.metric("Operational Impact Increase (%)", f"{impact:.2f}%")
 
 # --------------------------------------------------
-# MAP & ANALYSIS
+# GEOSPATIAL VISUALIZATION
 # --------------------------------------------------
-st.subheader("🗺 Real-Time Delivery Route")
-view_state = pdk.ViewState(latitude=(store_lat + customer_lat) / 2, longitude=(store_lon + customer_lon) / 2, zoom=13)
-route_layer = pdk.Layer("PathLayer", data=[{"path": route_geometry}], get_path="path", get_color=[255, 0, 0], width_min_pixels=5)
-scatter_layer = pdk.Layer("ScatterplotLayer", data=pd.DataFrame({"lat": [store_lat, customer_lat], "lon": [store_lon, customer_lon]}), get_position='[lon, lat]', get_radius=100, get_fill_color=[0, 255, 0])
+st.subheader("Geospatial Route Visualization")
 
-st.pydeck_chart(pdk.Deck(layers=[route_layer, scatter_layer], initial_view_state=view_state, map_style="road"))
+m = folium.Map(
+    location=[store_lat, store_lon],
+    zoom_start=12,
+    tiles="OpenStreetMap"
+)
 
-with st.expander("📊 Advanced Model Evaluation & Feature Importance"):
-    c1, c2 = st.columns(2)
-    c1.write(f"**Random Forest R²:** {metrics['rf_r2']:.2f}")
-    c2.write(f"**Deep Learning R²:** {metrics['dl_r2']:.2f}")
-    st.bar_chart(feature_importance.set_index("feature").head(10))
+folium.Marker(
+    [store_lat, store_lon],
+    popup="Store Location",
+    icon=folium.Icon(color="green")
+).add_to(m)
 
+folium.Marker(
+    [customer_lat, customer_lon],
+    popup="Customer Location",
+    icon=folium.Icon(color="black")
+).add_to(m)
 
+folium.PolyLine(
+    locations=[[store_lat, store_lon], [customer_lat, customer_lon]],
+    color="blue",
+    weight=5
+).add_to(m)
+
+st_folium(m, width=950, height=500)
+
+# --------------------------------------------------
+# MODEL PERFORMANCE SECTION
+# --------------------------------------------------
+with st.expander("Model Performance Metrics and Feature Analysis"):
+    if metrics:
+        st.write("Deep Learning MAE:", round(metrics.get("dl_mae", 0), 2))
+        st.write("Deep Learning R²:", round(metrics.get("dl_r2", 0), 2))
+
+    if not feature_importance.empty:
+        st.markdown("Top Feature Importance")
+        st.dataframe(feature_importance.head(10))
