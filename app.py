@@ -2,21 +2,21 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import joblib
-import pydeck as pdk
 import json
-import requests
 import os
+import folium
+from streamlit_folium import st_folium
 from tensorflow.keras.models import load_model
 
 # --------------------------------------------------
 # PAGE CONFIG
 # --------------------------------------------------
 st.set_page_config(page_title="Urban Logistics AI", layout="wide")
-st.title("🚚 Intelligent Urban Logistics Optimization System")
-st.caption("Deep Learning-Based Strategic Last-Mile Delivery Decision Support")
+st.title("🚚 AI-Powered Strategic Last-Mile Delivery Optimization Dashboard")
+st.caption("Deep Learning-Based Strategic Urban Logistics Decision Support System")
 
 # --------------------------------------------------
-# LOAD MODELS (FROM ROOT FOLDER)
+# LOAD MODELS
 # --------------------------------------------------
 @st.cache_resource
 def load_dl_model():
@@ -35,20 +35,17 @@ def load_scaler():
 model = load_dl_model()
 scaler = load_scaler()
 
-# Feature names safe check
-if hasattr(scaler, "feature_names_in_"):
-    expected_features = scaler.feature_names_in_
-else:
-    expected_features = None
+expected_features = scaler.feature_names_in_
 
-# Load metrics safely
+# --------------------------------------------------
+# LOAD METRICS
+# --------------------------------------------------
 try:
     with open("model_metrics.json", "r") as f:
         metrics = json.load(f)
 except:
     metrics = {}
 
-# Load feature importance safely
 try:
     feature_importance = pd.read_csv("feature_importance.csv")
 except:
@@ -74,54 +71,40 @@ traffic_level = st.sidebar.selectbox(
 )
 
 # --------------------------------------------------
-# SIMPLE DISTANCE CALCULATION (No API Dependency)
+# DISTANCE CALCULATION
 # --------------------------------------------------
 distance = np.sqrt(
     (store_lat - customer_lat)**2 +
     (store_lon - customer_lon)**2
-) * 111  # Rough km conversion
+) * 111
 
-ors_duration = distance * 4  # Assume avg 15 km/hr city speed
+estimated_travel_time = distance * 4
 
 # --------------------------------------------------
-# PREPARE MODEL INPUT
+# MODEL INPUT PREPARATION
 # --------------------------------------------------
-if expected_features is not None:
-    input_dict = {}
+input_dict = {}
 
-    for feature in expected_features:
+for feature in expected_features:
+    if "latitude" in feature.lower() and "delivery" not in feature.lower():
+        input_dict[feature] = store_lat
+    elif "longitude" in feature.lower() and "delivery" not in feature.lower():
+        input_dict[feature] = store_lon
+    elif "delivery" in feature.lower() and "latitude" in feature.lower():
+        input_dict[feature] = customer_lat
+    elif "delivery" in feature.lower() and "longitude" in feature.lower():
+        input_dict[feature] = customer_lon
+    elif "distance" in feature.lower():
+        input_dict[feature] = distance
+    elif "rating" in feature.lower():
+        input_dict[feature] = store_rating
+    elif "cost" in feature.lower():
+        input_dict[feature] = order_cost
+    else:
+        input_dict[feature] = 0
 
-        if "latitude" in feature.lower() and "delivery" not in feature.lower():
-            input_dict[feature] = store_lat
-
-        elif "longitude" in feature.lower() and "delivery" not in feature.lower():
-            input_dict[feature] = store_lon
-
-        elif "delivery" in feature.lower() and "latitude" in feature.lower():
-            input_dict[feature] = customer_lat
-
-        elif "delivery" in feature.lower() and "longitude" in feature.lower():
-            input_dict[feature] = customer_lon
-
-        elif "distance" in feature.lower():
-            input_dict[feature] = distance
-
-        elif "rating" in feature.lower():
-            input_dict[feature] = store_rating
-
-        elif "cost" in feature.lower():
-            input_dict[feature] = order_cost
-
-        else:
-            input_dict[feature] = 0
-
-    input_df = pd.DataFrame([input_dict])
-    input_df = input_df[expected_features]
-    input_scaled = scaler.transform(input_df)
-
-else:
-    st.error("Scaler missing feature names.")
-    st.stop()
+input_df = pd.DataFrame([input_dict])[expected_features]
+input_scaled = scaler.transform(input_df)
 
 # --------------------------------------------------
 # PREDICTION
@@ -129,7 +112,7 @@ else:
 model_time = model.predict(input_scaled, verbose=0)[0][0]
 
 prep_time = 10
-logic_time = prep_time + ors_duration
+logic_time = prep_time + estimated_travel_time
 
 predicted_time = (model_time * 0.6) + (logic_time * 0.4)
 
@@ -160,40 +143,46 @@ improvement = ((predicted_time - optimized_time) / predicted_time) * 100
 st.write(f"📈 Estimated Efficiency Gain: {improvement:.2f}%")
 
 # --------------------------------------------------
-# MAP VISUALIZATION
+# LEAFLET MAP (GOOGLE-LIKE STYLE)
 # --------------------------------------------------
-st.subheader("🗺 Delivery Route")
+st.subheader("🗺 Real-Time Delivery Route (OpenStreetMap View)")
 
-route_layer = pdk.Layer(
-    "LineLayer",
-    data=[{
-        "start": [store_lon, store_lat],
-        "end": [customer_lon, customer_lat]
-    }],
-    get_source_position="start",
-    get_target_position="end",
-    get_width=5,
-    get_color=[255, 0, 0],
+m = folium.Map(
+    location=[store_lat, store_lon],
+    zoom_start=11,
+    tiles="OpenStreetMap"
 )
 
-view_state = pdk.ViewState(
-    latitude=(store_lat + customer_lat) / 2,
-    longitude=(store_lon + customer_lon) / 2,
-    zoom=12,
-)
+# Store Marker (Green)
+folium.Marker(
+    [store_lat, store_lon],
+    popup="Store Location",
+    icon=folium.Icon(color="green")
+).add_to(m)
 
-st.pydeck_chart(
-    pdk.Deck(
-        layers=[route_layer],
-        initial_view_state=view_state
-    )
-)
+# Customer Marker (Black)
+folium.Marker(
+    [customer_lat, customer_lon],
+    popup="Customer Location",
+    icon=folium.Icon(color="black")
+).add_to(m)
+
+# Route Line
+folium.PolyLine(
+    locations=[
+        [store_lat, store_lon],
+        [customer_lat, customer_lon]
+    ],
+    color="blue",
+    weight=5
+).add_to(m)
+
+st_folium(m, width=900, height=500)
 
 # --------------------------------------------------
 # ADVANCED MODEL ANALYSIS
 # --------------------------------------------------
 with st.expander("📊 Advanced Model Evaluation"):
-
     if metrics:
         st.write("Deep Learning MAE:", round(metrics.get("dl_mae", 0), 2))
         st.write("Deep Learning R²:", round(metrics.get("dl_r2", 0), 2))
