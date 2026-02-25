@@ -40,23 +40,33 @@ except Exception as e:
 # --------------------------------------------------
 # ORS CONFIG (Fixed 403 Forbidden Error)
 # --------------------------------------------------
-ORS_API_KEY = st.secrets["ORS_API_KEY"]
+ORS_API_KEY = st.secrets["ORS_API_KEYv"]
 
 @st.cache_data
 def get_ors_route(start_lat, start_lon, end_lat, end_lon):
-    # Passing key in URL to bypass some 403 Header restrictions
-    url = f"https://api.openrouteservice.org/v2/directions/driving-car?api_key={ORS_API_KEY}"
+    # ORS strictly requires [Longitude, Latitude]
+    url = f"https://api.openrouteservice.org/v2/directions/driving-car"
     
-    headers = {"Content-Type": "application/json"}
+    headers = {
+        "Authorization": ORS_API_KEY,
+        "Content-Type": "application/json"
+    }
+    
     body = {
         "coordinates": [
-            [start_lon, start_lat],
-            [end_lon, end_lat]
+            [float(start_lon), float(start_lat)], 
+            [float(customer_lon), float(customer_lat)]
         ]
     }
 
     try:
         response = requests.post(url, json=body, headers=headers, timeout=10)
+        
+        # If headers fail, try the API Key in the URL as a fallback
+        if response.status_code == 403:
+            fallback_url = f"{url}?api_key={ORS_API_KEY}"
+            response = requests.post(fallback_url, json=body, timeout=10)
+            
         response.raise_for_status()
         data = response.json()
 
@@ -164,3 +174,4 @@ with st.expander("📊 Advanced Model Evaluation & Feature Importance"):
     c1.write(f"**Random Forest R²:** {metrics['rf_r2']:.2f}")
     c2.write(f"**Deep Learning R²:** {metrics['dl_r2']:.2f}")
     st.bar_chart(feature_importance.set_index("feature").head(10))
+
