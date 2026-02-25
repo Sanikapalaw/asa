@@ -15,22 +15,25 @@ st.set_page_config(page_title="Urban Logistics AI", layout="wide")
 st.title("🚚 Intelligent Urban Logistics Optimization System")
 st.caption("Deep Learning-Based Strategic Last-Mile Delivery Decision Support")
 
+
 # --------------------------------------------------
-# LOAD MODELS & FILES
+# LOAD MODELS & FILES (Updated for Root Directory)
 # --------------------------------------------------
 @st.cache_resource
 def load_assets():
-    model = load_model("models/dl_model.keras")
-    scaler = joblib.load("models/scaler.pkl")
+    # Removed "models/" prefix because files are in the main folder
+    model = load_model("dl_model.keras")
+    scaler = joblib.load("scaler.pkl")
     return model, scaler
 
 model, scaler = load_assets()
 expected_features = scaler.feature_names_in_
 
-with open("models/model_metrics.json", "r") as f:
+# Also update these paths
+with open("model_metrics.json", "r") as f:
     metrics = json.load(f)
 
-feature_importance = pd.read_csv("models/feature_importance.csv")
+feature_importance = pd.read_csv("feature_importance.csv")
 
 # --------------------------------------------------
 # ORS CONFIG (Using Streamlit Secrets)
@@ -150,3 +153,4 @@ with st.expander("📊 Advanced Model Evaluation & Feature Importance"):
     c1.write(f"**Random Forest R²:** {metrics['rf_r2']:.2f}")
     c2.write(f"**Deep Learning R²:** {metrics['dl_r2']:.2f}")
     st.bar_chart(feature_importance.set_index("feature").head(10))
+
