@@ -15,41 +15,51 @@ st.set_page_config(page_title="Urban Logistics AI", layout="wide")
 st.title("🚚 Intelligent Urban Logistics Optimization System")
 st.caption("Deep Learning-Based Strategic Last-Mile Delivery Decision Support")
 
-
 # --------------------------------------------------
-# LOAD MODELS & FILES (Updated for Root Directory)
+# LOAD MODELS & FILES (Paths fixed for root directory)
 # --------------------------------------------------
 @st.cache_resource
 def load_assets():
-    # Removed "models/" prefix because files are in the main folder
-    model = load_model("dl_model.keras")
+    # Files are in the root folder as per your GitHub screenshot
+    model = load_model("dl_model.keras") 
     scaler = joblib.load("scaler.pkl")
     return model, scaler
 
-model, scaler = load_assets()
-expected_features = scaler.feature_names_in_
+try:
+    model, scaler = load_assets()
+    expected_features = scaler.feature_names_in_
 
-# Also update these paths
-with open("model_metrics.json", "r") as f:
-    metrics = json.load(f)
+    with open("model_metrics.json", "r") as f:
+        metrics = json.load(f)
 
-feature_importance = pd.read_csv("feature_importance.csv")
+    feature_importance = pd.read_csv("feature_importance.csv")
+except Exception as e:
+    st.error(f"Error loading model assets: {e}. Ensure all files are in the main GitHub folder.")
+    st.stop()
 
 # --------------------------------------------------
-# ORS CONFIG (Using Streamlit Secrets)
+# ORS CONFIG (Fixed 403 Forbidden Error)
 # --------------------------------------------------
 ORS_API_KEY = st.secrets["ORS_API_KEY"]
 
 @st.cache_data
 def get_ors_route(start_lat, start_lon, end_lat, end_lon):
-    url = "https://api.openrouteservice.org/v2/directions/driving-car"
-    headers = {"Authorization": ORS_API_KEY, "Content-Type": "application/json"}
-    body = {"coordinates": [[start_lon, start_lat], [end_lon, end_lat]]}
+    # Passing key in URL to bypass some 403 Header restrictions
+    url = f"https://api.openrouteservice.org/v2/directions/driving-car?api_key={ORS_API_KEY}"
+    
+    headers = {"Content-Type": "application/json"}
+    body = {
+        "coordinates": [
+            [start_lon, start_lat],
+            [end_lon, end_lat]
+        ]
+    }
 
     try:
         response = requests.post(url, json=body, headers=headers, timeout=10)
         response.raise_for_status()
         data = response.json()
+
         geometry = data["features"][0]["geometry"]["coordinates"]
         distance = data["features"][0]["properties"]["summary"]["distance"] / 1000
         duration = data["features"][0]["properties"]["summary"]["duration"] / 60
@@ -83,6 +93,7 @@ order_cost = st.sidebar.number_input("Order Cost (₹)", value=300)
 route_geometry, distance, ors_duration = get_ors_route(store_lat, store_lon, customer_lat, customer_lon)
 
 if distance is None:
+    st.info("Please verify your ORS API Key and coordinates.")
     st.stop()
 
 # Build Model Input
@@ -108,7 +119,7 @@ logic_time = prep_time + ors_duration
 # Weighted base prediction
 base_predicted_time = (model_time * 0.6) + (logic_time * 0.4)
 
-# STRATEGIC MULTIPLIERS (Adjusting for Problem Statement variables)
+# STRATEGIC MULTIPLIERS (As per Project Objectives)
 traffic_factor = {"Low": 1.0, "Moderate": 1.2, "High": 1.5}[traffic_level]
 weather_factor = {"Clear": 1.0, "Cloudy": 1.1, "Foggy": 1.3, "Sandstorms": 1.4, "Windy": 1.2, "Stormy": 1.6}[weather_condition]
 festival_multiplier = 1.3 if is_festival else 1.0
@@ -123,20 +134,20 @@ optimized_time = predicted_time / traffic_factor
 st.subheader("📊 Operational Prediction Dashboard")
 col1, col2, col3 = st.columns(3)
 col1.metric("📏 Road Distance", f"{distance:.2f} km")
-col2.metric("⏱ Estimated Delivery Time", f"{predicted_time:.2f} mins")
+col2.metric("⏱ Predicted Time", f"{predicted_time:.2f} mins")
 col3.metric("🚀 Optimized Target", f"{optimized_time:.2f} mins")
 
 # Strategic Risk Assessment Layer
 sla_threshold = 40
 if predicted_time > sla_threshold:
-    st.error(f"⚠️ **High Delay Risk** ({weather_condition} conditions + Traffic). Increase manpower.")
+    st.error(f"⚠️ **High Delay Risk** ({weather_condition} conditions + Traffic). Strategic intervention required.")
 elif predicted_time > 30:
-    st.warning("⚠️ **Moderate Delay Risk** - Monitor preparation closely.")
+    st.warning("⚠️ **Moderate Delay Risk** - Monitor courier preparation.")
 else:
     st.success("✅ **Low Delay Risk** - Operations Stable.")
 
 improvement = ((predicted_time - optimized_time) / predicted_time) * 100
-st.info(f"📈 **Strategic Insight:** Optimization could reduce delivery time by **{improvement:.2f}%**.")
+st.info(f"📈 **Strategic Insight:** Smart scheduling could reduce delivery time by **{improvement:.2f}%**.")
 
 # --------------------------------------------------
 # MAP & ANALYSIS
@@ -153,4 +164,3 @@ with st.expander("📊 Advanced Model Evaluation & Feature Importance"):
     c1.write(f"**Random Forest R²:** {metrics['rf_r2']:.2f}")
     c2.write(f"**Deep Learning R²:** {metrics['dl_r2']:.2f}")
     st.bar_chart(feature_importance.set_index("feature").head(10))
-
